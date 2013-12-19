@@ -12,7 +12,7 @@
 import inspect
 import urlparse
 
-import flask_wtf as wtf
+from flask.ext import wtf
 
 from flask import request, current_app
 from flask_wtf import Form as BaseForm
