@@ -192,7 +192,7 @@ class AWSUserDatastore(AWSDatastore, UserDatastore):
         return self.user_model.get(id_or_email)
 
     def find_user(self, **kwargs):
-        user_id = kwargs.values()[0]
+        id_or_email = kwargs.values()[0]
         return self.user_model.get(id_or_email)
 
     def find_role(self, role):
