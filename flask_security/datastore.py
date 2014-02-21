@@ -24,6 +24,15 @@ class Datastore(object):
         raise NotImplementedError
 
 
+class AWSDatastore(Datastore):
+    def put(self, model):
+        model.save(raise_on_commit=True)
+        return model
+
+    def delete(self, model):
+        model.delete(raise_on_commit=True)
+
+
 class SQLAlchemyDatastore(Datastore):
     def commit(self):
         self.db.session.commit()
@@ -169,6 +178,25 @@ class UserDatastore(object):
         :param user: The user to delete
         """
         self.delete(user)
+
+
+class AWSUserDatastore(AWSDatastore, UserDatastore):
+    """A MongoEngine datastore implementation for Flask-Security that assumes
+    the use of the Flask-MongoEngine extension.
+    """
+    def __init__(self, db, user_model, role_model):
+        AWSDatastore.__init__(self, db)
+        UserDatastore.__init__(self, user_model, role_model)
+
+    def get_user(self, id_or_email):
+        return self.user_model.get(id_or_email)
+
+    def find_user(self, **kwargs):
+        id_or_email = kwargs.values()[0]
+        return self.user_model.get(id_or_email)
+
+    def find_role(self, role):
+        return self.role_model.get(role)
 
 
 class SQLAlchemyUserDatastore(SQLAlchemyDatastore, UserDatastore):

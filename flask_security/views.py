@@ -27,6 +27,7 @@ from .registerable import register_user
 from .utils import config_value, do_flash, get_url, get_post_login_redirect, \
     get_post_register_redirect, get_message, login_user, logout_user, \
     url_for_security as url_for
+import pdb
 
 # Convenient references
 _security = LocalProxy(lambda: current_app.extensions['security'])
@@ -70,6 +71,7 @@ def login():
     else:
         form = form_class()
 
+    pdb.set_trace()
     if form.validate_on_submit():
         login_user(form.user, remember=form.remember.data)
         after_this_request(_commit)
