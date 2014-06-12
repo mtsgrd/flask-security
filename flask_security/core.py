@@ -9,7 +9,7 @@
     :license: MIT, see LICENSE for more details.
 """
 
-from flask import current_app
+from flask import current_app, render_template
 from flask.ext.login import AnonymousUserMixin, UserMixin as BaseUserMixin, \
     LoginManager, current_user
 from flask.ext.principal import Principal, RoleNeed, UserNeed, Identity, \
@@ -18,8 +18,9 @@ from itsdangerous import URLSafeTimedSerializer
 from passlib.context import CryptContext
 from werkzeug.datastructures import ImmutableList
 from werkzeug.local import LocalProxy
+from werkzeug.security import safe_str_cmp
 
-from .utils import config_value as cv, get_config, md5, url_for_security
+from .utils import config_value as cv, get_config, md5, url_for_security, string_types
 from .views import create_blueprint
 from .forms import LoginForm, ConfirmRegisterForm, RegisterForm, \
     ForgotPasswordForm, ChangePasswordForm, ResetPasswordForm, \
@@ -66,6 +67,7 @@ _default_config = {
     'CHANGEABLE': False,
     'SEND_REGISTER_EMAIL': True,
     'SEND_PASSWORD_CHANGE_EMAIL': True,
+    'SEND_PASSWORD_RESET_NOTICE_EMAIL': True,
     'LOGIN_WITHIN': '1 days',
     'CONFIRM_EMAIL_WITHIN': '5 days',
     'RESET_PASSWORD_WITHIN': '5 days',
@@ -85,53 +87,92 @@ _default_config = {
     'EMAIL_SUBJECT_PASSWORDLESS': 'Login instructions',
     'EMAIL_SUBJECT_PASSWORD_NOTICE': 'Your password has been reset',
     'EMAIL_SUBJECT_PASSWORD_CHANGE_NOTICE': 'Your password has been changed',
-    'EMAIL_SUBJECT_PASSWORD_RESET': 'Password reset instructions'
+    'EMAIL_SUBJECT_PASSWORD_RESET': 'Password reset instructions',
+    'USER_IDENTITY_ATTRIBUTES': ['email'],
+    'PASSWORD_SCHEMES': [
+        'bcrypt',
+        'des_crypt',
+        'pbkdf2_sha256',
+        'pbkdf2_sha512',
+        'sha256_crypt',
+        'sha512_crypt',
+        # And always last one...
+        'plaintext'
+    ],
+    'DEPRECATED_PASSWORD_SCHEMES': ['auto']
 }
 
 #: Default Flask-Security messages
 _default_messages = {
-    'UNAUTHORIZED': ('You do not have permission to view this resource.', 'error'),
-    'CONFIRM_REGISTRATION': ('Thank you. Confirmation instructions have been sent to %(email)s.', 'success'),
-    'EMAIL_CONFIRMED': ('Thank you. Your email has been confirmed.', 'success'),
-    'ALREADY_CONFIRMED': ('Your email has already been confirmed.', 'info'),
-    'INVALID_CONFIRMATION_TOKEN': ('Invalid confirmation token.', 'error'),
-    'EMAIL_ALREADY_ASSOCIATED': ('%(email)s is already associated with an account.', 'error'),
-    'PASSWORD_MISMATCH': ('Password does not match', 'error'),
-    'RETYPE_PASSWORD_MISMATCH': ('Passwords do not match', 'error'),
-    'INVALID_REDIRECT': ('Redirections outside the domain are forbidden', 'error'),
-    'PASSWORD_RESET_REQUEST': ('Instructions to reset your password have been sent to %(email)s.', 'info'),
-    'PASSWORD_RESET_EXPIRED': ('You did not reset your password within %(within)s. New instructions have been sent to %(email)s.', 'error'),
-    'INVALID_RESET_PASSWORD_TOKEN': ('Invalid reset password token.', 'error'),
-    'CONFIRMATION_REQUIRED': ('Email requires confirmation.', 'error'),
-    'CONFIRMATION_REQUEST': ('Confirmation instructions have been sent to %(email)s.', 'info'),
-    'CONFIRMATION_EXPIRED': ('You did not confirm your email within %(within)s. New instructions to confirm your email have been sent to %(email)s.', 'error'),
-    'LOGIN_EXPIRED': ('You did not login within %(within)s. New instructions to login have been sent to %(email)s.', 'error'),
-    'LOGIN_EMAIL_SENT': ('Instructions to login have been sent to %(email)s.', 'success'),
-    'INVALID_LOGIN_TOKEN': ('Invalid login token.', 'error'),
-    'DISABLED_ACCOUNT': ('Account is disabled.', 'error'),
-    'EMAIL_NOT_PROVIDED': ('Email not provided', 'error'),
-    'INVALID_EMAIL_ADDRESS': ('Invalid email address', 'error'),
-    'PASSWORD_NOT_PROVIDED': ('Password not provided', 'error'),
-    'PASSWORD_INVALID_LENGTH': ('Password must be at least 6 characters', 'error'),
-    'USER_DOES_NOT_EXIST': ('Specified user does not exist', 'error'),
-    'INVALID_PASSWORD': ('Invalid password', 'error'),
-    'PASSWORDLESS_LOGIN_SUCCESSFUL': ('You have successfuly logged in.', 'success'),
-    'PASSWORD_RESET': ('You successfully reset your password and you have been logged in automatically.', 'success'),
-    'PASSWORD_CHANGE': ('You successfully changed your password.', 'success'),
-    'LOGIN': ('Please log in to access this page.', 'info'),
-    'REFRESH': ('Please reauthenticate to access this page.', 'info'),
+    'UNAUTHORIZED': (
+        'You do not have permission to view this resource.', 'error'),
+    'CONFIRM_REGISTRATION': (
+        'Thank you. Confirmation instructions have been sent to %(email)s.', 'success'),
+    'EMAIL_CONFIRMED': (
+        'Thank you. Your email has been confirmed.', 'success'),
+    'ALREADY_CONFIRMED': (
+        'Your email has already been confirmed.', 'info'),
+    'INVALID_CONFIRMATION_TOKEN': (
+        'Invalid confirmation token.', 'error'),
+    'EMAIL_ALREADY_ASSOCIATED': (
+        '%(email)s is already associated with an account.', 'error'),
+    'PASSWORD_MISMATCH': (
+        'Password does not match', 'error'),
+    'RETYPE_PASSWORD_MISMATCH': (
+        'Passwords do not match', 'error'),
+    'INVALID_REDIRECT': (
+        'Redirections outside the domain are forbidden', 'error'),
+    'PASSWORD_RESET_REQUEST': (
+        'Instructions to reset your password have been sent to %(email)s.', 'info'),
+    'PASSWORD_RESET_EXPIRED': (
+        'You did not reset your password within %(within)s. New instructions have been sent '
+        'to %(email)s.', 'error'),
+    'INVALID_RESET_PASSWORD_TOKEN': (
+        'Invalid reset password token.', 'error'),
+    'CONFIRMATION_REQUIRED': (
+        'Email requires confirmation.', 'error'),
+    'CONFIRMATION_REQUEST': (
+        'Confirmation instructions have been sent to %(email)s.', 'info'),
+    'CONFIRMATION_EXPIRED': (
+        'You did not confirm your email within %(within)s. New instructions to confirm your email '
+        'have been sent to %(email)s.', 'error'),
+    'LOGIN_EXPIRED': (
+        'You did not login within %(within)s. New instructions to login have been sent to '
+        '%(email)s.', 'error'),
+    'LOGIN_EMAIL_SENT': (
+        'Instructions to login have been sent to %(email)s.', 'success'),
+    'INVALID_LOGIN_TOKEN': (
+        'Invalid login token.', 'error'),
+    'DISABLED_ACCOUNT': (
+        'Account is disabled.', 'error'),
+    'EMAIL_NOT_PROVIDED': (
+        'Email not provided', 'error'),
+    'INVALID_EMAIL_ADDRESS': (
+        'Invalid email address', 'error'),
+    'PASSWORD_NOT_PROVIDED': (
+        'Password not provided', 'error'),
+    'PASSWORD_NOT_SET': (
+        'No password is set for this user', 'error'),
+    'PASSWORD_INVALID_LENGTH': (
+        'Password must be at least 6 characters', 'error'),
+    'USER_DOES_NOT_EXIST': (
+        'Specified user does not exist', 'error'),
+    'INVALID_PASSWORD': (
+        'Invalid password', 'error'),
+    'PASSWORDLESS_LOGIN_SUCCESSFUL': (
+        'You have successfuly logged in.', 'success'),
+    'PASSWORD_RESET': (
+        'You successfully reset your password and you have been logged in automatically.',
+        'success'),
+    'PASSWORD_IS_THE_SAME': (
+        'Your new password must be different than your previous password.', 'error'),
+    'PASSWORD_CHANGE': (
+        'You successfully changed your password.', 'success'),
+    'LOGIN': (
+        'Please log in to access this page.', 'info'),
+    'REFRESH': (
+        'Please reauthenticate to access this page.', 'info'),
 }
-
-_allowed_password_hash_schemes = [
-    'bcrypt',
-    'des_crypt',
-    'pbkdf2_sha256',
-    'pbkdf2_sha512',
-    'sha256_crypt',
-    'sha512_crypt',
-    # And always last one...
-    'plaintext'
-]
 
 _default_forms = {
     'login_form': LoginForm,
@@ -153,7 +194,7 @@ def _token_loader(token):
     try:
         data = _security.remember_token_serializer.loads(token)
         user = _security.datastore.find_user(id=data[0])
-        if user and md5(user.password) == data[1]:
+        if user and safe_str_cmp(md5(user.password), data[1]):
             return user
     except:
         pass
@@ -202,10 +243,12 @@ def _get_principal(app):
 
 def _get_pwd_context(app):
     pw_hash = cv('PASSWORD_HASH', app=app)
-    if pw_hash not in _allowed_password_hash_schemes:
-        allowed = ', '.join(_allowed_password_hash_schemes[:-1]) + ' and ' + _allowed_password_hash_schemes[-1]
+    schemes = cv('PASSWORD_SCHEMES', app=app)
+    deprecated = cv('DEPRECATED_PASSWORD_SCHEMES', app=app)
+    if pw_hash not in schemes:
+        allowed = (', '.join(schemes[:-1]) + ' and ' + schemes[-1])
         raise ValueError("Invalid hash scheme %r. Allowed values are %s" % (pw_hash, allowed))
-    return CryptContext(schemes=_allowed_password_hash_schemes, default=pw_hash)
+    return CryptContext(schemes=schemes, default=pw_hash, deprecated=deprecated)
 
 
 def _get_serializer(app, name):
@@ -245,12 +288,16 @@ def _context_processor():
 
 class RoleMixin(object):
     """Mixin for `Role` model definitions"""
+
     def __eq__(self, other):
         return (self.name == other or
                 self.name == getattr(other, 'name', None))
 
     def __ne__(self, other):
         return not self.__eq__(other)
+
+    def __hash__(self):
+        return hash(self.name)
 
 
 class UserMixin(BaseUserMixin):
@@ -269,7 +316,7 @@ class UserMixin(BaseUserMixin):
         """Returns `True` if the user identifies with the specified role.
 
         :param role: A role name or `Role` instance"""
-        if isinstance(role, basestring):
+        if isinstance(role, string_types):
             return role in (role.name for role in self.roles)
         else:
             return role in self.roles
@@ -297,14 +344,11 @@ class _SecurityState(object):
         fn not in group and group.append(fn)
 
     def _run_ctx_processor(self, endpoint):
-        rv, fns = {}, []
+        rv = {}
         for g in [None, endpoint]:
             for fn in self._context_processors.setdefault(g, []):
                 rv.update(fn())
         return rv
-
-    def context_processor(self, fn):
-        self._add_ctx_processor(None, fn)
 
     def forgot_password_context_processor(self, fn):
         self._add_ctx_processor('forgot_password', fn)
@@ -383,9 +427,13 @@ class Security(object):
             app.register_blueprint(create_blueprint(state, __name__))
             app.context_processor(_context_processor)
 
+        state.render_template = self.render_template
         app.extensions['security'] = state
 
         return state
+
+    def render_template(self, *args, **kwargs):
+        return render_template(*args, **kwargs)
 
     def __getattr__(self, name):
         return getattr(self._state, name, None)

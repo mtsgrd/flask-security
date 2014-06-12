@@ -9,7 +9,7 @@
     :license: MIT, see LICENSE for more details.
 """
 
-from flask import current_app, redirect, request, render_template, jsonify, \
+from flask import current_app, redirect, request, jsonify, \
     after_this_request, Blueprint
 from flask_login import current_user
 from werkzeug.datastructures import MultiDict
@@ -34,7 +34,7 @@ _security = LocalProxy(lambda: current_app.extensions['security'])
 _datastore = LocalProxy(lambda: _security.datastore)
 
 
-def _render_json(form, include_auth_token=False):
+def _render_json(form, include_user=True, include_auth_token=False):
     has_errors = len(form.errors) > 0
 
     if has_errors:
@@ -42,7 +42,9 @@ def _render_json(form, include_auth_token=False):
         response = dict(errors=form.errors)
     else:
         code = 200
-        response = dict(user=dict(id=str(form.user.id)))
+        response = dict()
+        if include_user:
+            response['user'] = dict(id=str(form.user.id))
         if include_auth_token:
             token = form.user.get_auth_token()
             response['user']['authentication_token'] = token
@@ -75,29 +77,27 @@ def login():
         after_this_request(_commit)
 
         if not request.json:
-            return redirect(get_post_login_redirect())
-
-    form.next.data = get_url(request.args.get('next')) \
-                     or get_url(request.form.get('next')) or ''
+            return redirect(get_post_login_redirect(form.next.data))
 
     if request.json:
-        return _render_json(form, True)
+        return _render_json(form, include_auth_token=True)
 
-    return render_template(config_value('LOGIN_USER_TEMPLATE'),
-                           login_user_form=form,
-                           **_ctx('login'))
+    return _security.render_template(config_value('LOGIN_USER_TEMPLATE'),
+                                     login_user_form=form,
+                                     **_ctx('login'))
 
 
-@login_required
 def logout():
     """View function which handles a logout request."""
 
-    logout_user()
+    if current_user.is_authenticated():
+        logout_user()
 
     return redirect(request.args.get('next', None) or
                     get_url(_security.post_logout_view))
 
 
+@anonymous_user_required
 def register():
     """View function which handles a registration request."""
 
@@ -123,13 +123,14 @@ def register():
 
         if not request.json:
             return redirect(get_post_register_redirect())
+        return _render_json(form, include_auth_token=True)
 
     if request.json:
         return _render_json(form)
 
-    return render_template(config_value('REGISTER_USER_TEMPLATE'),
-                           register_user_form=form,
-                           **_ctx('register'))
+    return _security.render_template(config_value('REGISTER_USER_TEMPLATE'),
+                                     register_user_form=form,
+                                     **_ctx('register'))
 
 
 def send_login():
@@ -150,9 +151,9 @@ def send_login():
     if request.json:
         return _render_json(form)
 
-    return render_template(config_value('SEND_LOGIN_TEMPLATE'),
-                           send_login_form=form,
-                           **_ctx('send_login'))
+    return _security.render_template(config_value('SEND_LOGIN_TEMPLATE'),
+                                     send_login_form=form,
+                                     **_ctx('send_login'))
 
 
 @anonymous_user_required
@@ -195,9 +196,9 @@ def send_confirmation():
     if request.json:
         return _render_json(form)
 
-    return render_template(config_value('SEND_CONFIRMATION_TEMPLATE'),
-                           send_confirmation_form=form,
-                           **_ctx('send_confirmation'))
+    return _security.render_template(config_value('SEND_CONFIRMATION_TEMPLATE'),
+                                     send_confirmation_form=form,
+                                     **_ctx('send_confirmation'))
 
 
 def confirm_email(token):
@@ -220,9 +221,13 @@ def confirm_email(token):
         logout_user()
         login_user(user)
 
-    confirm_user(user)
-    after_this_request(_commit)
-    do_flash(*get_message('EMAIL_CONFIRMED'))
+    if confirm_user(user):
+        after_this_request(_commit)
+        msg = 'EMAIL_CONFIRMED'
+    else:
+        msg = 'ALREADY_CONFIRMED'
+
+    do_flash(*get_message(msg))
 
     return redirect(get_url(_security.post_confirm_view) or
                     get_url(_security.post_login_view))
@@ -244,11 +249,11 @@ def forgot_password():
             do_flash(*get_message('PASSWORD_RESET_REQUEST', email=form.user.email))
 
     if request.json:
-        return _render_json(form)
+        return _render_json(form, include_user=False)
 
-    return render_template(config_value('FORGOT_PASSWORD_TEMPLATE'),
-                           forgot_password_form=form,
-                           **_ctx('forgot_password'))
+    return _security.render_template(config_value('FORGOT_PASSWORD_TEMPLATE'),
+                                     forgot_password_form=form,
+                                     **_ctx('forgot_password'))
 
 
 @anonymous_user_required
@@ -275,10 +280,10 @@ def reset_password(token):
         return redirect(get_url(_security.post_reset_view) or
                         get_url(_security.post_login_view))
 
-    return render_template(config_value('RESET_PASSWORD_TEMPLATE'),
-                           reset_password_form=form,
-                           reset_password_token=token,
-                           **_ctx('reset_password'))
+    return _security.render_template(config_value('RESET_PASSWORD_TEMPLATE'),
+                                     reset_password_form=form,
+                                     reset_password_token=token,
+                                     **_ctx('reset_password'))
 
 
 @login_required
@@ -301,11 +306,12 @@ def change_password():
                             get_url(_security.post_login_view))
 
     if request.json:
+        form.user = current_user
         return _render_json(form)
 
-    return render_template(config_value('CHANGE_PASSWORD_TEMPLATE'),
-                           change_password_form=form,
-                           **_ctx('change_password'))
+    return _security.render_template(config_value('CHANGE_PASSWORD_TEMPLATE'),
+                                     change_password_form=form,
+                                     **_ctx('change_password'))
 
 
 def create_blueprint(state, import_name):

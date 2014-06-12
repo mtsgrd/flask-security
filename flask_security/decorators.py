@@ -13,7 +13,7 @@ from collections import namedtuple
 from functools import wraps
 
 from flask import current_app, Response, request, redirect, _request_ctx_stack
-from flask.ext.login import current_user, login_required
+from flask.ext.login import current_user, login_required  # pragma: no flakes
 from flask.ext.principal import RoleNeed, Permission, Identity, identity_changed
 from werkzeug.local import LocalProxy
 
@@ -51,7 +51,7 @@ def _check_token():
     args_key = _security.token_authentication_key
     header_token = request.headers.get(header_key, None)
     token = request.args.get(args_key, header_token)
-    if request.json:
+    if request.get_json(silent=True):
         token = request.json.get(args_key, token)
 
     user = _security.login_manager.token_callback(token)

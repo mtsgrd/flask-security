@@ -9,6 +9,8 @@
     :license: MIT, see LICENSE for more details.
 """
 
+from .utils import get_identity_attributes, string_types
+
 
 class Datastore(object):
     def __init__(self, db):
@@ -75,9 +77,9 @@ class UserDatastore(object):
         self.role_model = role_model
 
     def _prepare_role_modify_args(self, user, role):
-        if isinstance(user, basestring):
+        if isinstance(user, string_types):
             user = self.find_user(email=user)
-        if isinstance(role, basestring):
+        if isinstance(role, string_types):
             role = self.find_role(role)
         return user, role
 
@@ -112,6 +114,7 @@ class UserDatastore(object):
         user, role = self._prepare_role_modify_args(user, role)
         if role not in user.roles:
             user.roles.append(role)
+            self.put(user)
             return True
         return False
 
@@ -168,8 +171,8 @@ class UserDatastore(object):
 
     def create_user(self, **kwargs):
         """Creates and returns a new user from the given parameters."""
-
-        user = self.user_model(**self._prepare_create_user_args(**kwargs))
+        kwargs = self._prepare_create_user_args(**kwargs)
+        user = self.user_model(**kwargs)
         return self.put(user)
 
     def delete_user(self, user):
@@ -207,14 +210,14 @@ class SQLAlchemyUserDatastore(SQLAlchemyDatastore, UserDatastore):
         SQLAlchemyDatastore.__init__(self, db)
         UserDatastore.__init__(self, user_model, role_model)
 
-    def get_user(self, id_or_email):
-        returned = None
-        if self._is_numeric(id_or_email):
-            returned = self.user_model.query.get(id_or_email)
-        if not returned:
-            returned = self.user_model.query.filter(
-                self.user_model.email.ilike(id_or_email)).first()
-        return returned
+    def get_user(self, identifier):
+        if self._is_numeric(identifier):
+            return self.user_model.query.get(identifier)
+        for attr in get_identity_attributes():
+            query = getattr(self.user_model, attr).ilike(identifier)
+            rv = self.user_model.query.filter(query).first()
+            if rv is not None:
+                return rv
 
     def _is_numeric(self, value):
         try:
@@ -238,12 +241,18 @@ class MongoEngineUserDatastore(MongoEngineDatastore, UserDatastore):
         MongoEngineDatastore.__init__(self, db)
         UserDatastore.__init__(self, user_model, role_model)
 
-    def get_user(self, id_or_email):
+    def get_user(self, identifier):
         from mongoengine import ValidationError
         try:
-            return self.user_model.objects(id=id_or_email).first()
+            return self.user_model.objects(id=identifier).first()
         except ValidationError:
-            return self.user_model.objects(email__iexact=id_or_email).first()
+            pass
+        for attr in get_identity_attributes():
+            query_key = '%s__iexact' % attr
+            query = {query_key: identifier}
+            rv = self.user_model.objects(**query).first()
+            if rv is not None:
+                return rv
 
     def find_user(self, **kwargs):
         try:
@@ -256,11 +265,18 @@ class MongoEngineUserDatastore(MongoEngineDatastore, UserDatastore):
         query = QCombination(QCombination.AND, queries)
         try:
             return self.user_model.objects(query).first()
-        except ValidationError:
+        except ValidationError:  # pragma: no cover
             return None
 
     def find_role(self, role):
         return self.role_model.objects(name=role).first()
+
+    # TODO: Not sure why this was added but tests pass without it
+    # def add_role_to_user(self, user, role):
+    #     rv = super(MongoEngineUserDatastore, self).add_role_to_user(user, role)
+    #     if rv:
+    #         self.put(user)
+    #     return rv
 
 
 class PeeweeUserDatastore(PeeweeDatastore, UserDatastore):
@@ -276,16 +292,18 @@ class PeeweeUserDatastore(PeeweeDatastore, UserDatastore):
         UserDatastore.__init__(self, user_model, role_model)
         self.UserRole = role_link
 
-    def get_user(self, id_or_email):
+    def get_user(self, identifier):
         try:
-            return self.user_model.get(self.user_model.id == id_or_email)
+            return self.user_model.get(self.user_model.id == identifier)
         except ValueError:
             pass
-        try:
-            return self.user_model.get(self.user_model.email ** id_or_email)
-        except self.user_model.DoesNotExist:
-            pass
-        return None
+
+        for attr in get_identity_attributes():
+            column = getattr(self.user_model, attr)
+            try:
+                return self.user_model.get(column ** identifier)
+            except self.user_model.DoesNotExist:
+                pass
 
     def find_user(self, **kwargs):
         try:
@@ -306,6 +324,7 @@ class PeeweeUserDatastore(PeeweeDatastore, UserDatastore):
         user = self.put(user)
         for role in roles:
             self.add_role_to_user(user, role)
+        self.put(user)
         return user
 
     def add_role_to_user(self, user, role):
@@ -320,7 +339,7 @@ class PeeweeUserDatastore(PeeweeDatastore, UserDatastore):
         if result.count():
             return False
         else:
-            self.UserRole.create(user=user.id, role=role.id)
+            self.put(self.UserRole.create(user=user.id, role=role.id))
             return True
 
     def remove_role_from_user(self, user, role):
