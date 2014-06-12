@@ -188,14 +188,14 @@ class AWSUserDatastore(AWSDatastore, UserDatastore):
     the use of the Flask-MongoEngine extension.
     """
     def __init__(self, db, user_model, role_model):
-        AWSEngineDatastore.__init__(self, db)
+        AWSDatastore.__init__(self, db)
         UserDatastore.__init__(self, user_model, role_model)
 
     def get_user(self, id_or_email):
         return self.user_model.get(id_or_email)
 
     def find_user(self, **kwargs):
-        user_id = kwargs.values()[0]
+        id_or_email = kwargs.values()[0]
         return self.user_model.get(id_or_email)
 
     def find_role(self, role):
